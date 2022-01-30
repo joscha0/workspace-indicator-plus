@@ -11,8 +11,9 @@ const ExtensionUtils = imports.misc.extensionUtils;
 const _ = ExtensionUtils.gettext;
 const N_ = e => e;
 
-const WORKSPACE_SCHEMA = 'org.gnome.desktop.wm.preferences';
+const WORKSPACE_SCHEMA = 'org.gnome.shell.extensions.workspace-indicator-plus';
 const WORKSPACE_KEY = 'workspace-names';
+const POSITION_KEY = 'panel-position';
 
 const WorkspaceSettingsWidget = GObject.registerClass(
     class WorkspaceSettingsWidget extends Gtk.ScrolledWindow {
@@ -31,6 +32,27 @@ const WorkspaceSettingsWidget = GObject.registerClass(
                 margin_end: 36,
             });
             this.set_child(box);
+            this._settings = ExtensionUtils.getSettings();
+
+            box.append(new Gtk.Label({
+                label: "Panel Position",
+                halign: Gtk.Align.START,
+            }));
+
+            let panel_position = new Gtk.ComboBoxText();
+            panel_position.name = POSITION_KEY;
+            panel_position.append("left", "left");
+            panel_position.append("right", "right");
+            panel_position.append("center", "center");
+
+            panel_position.active_id = this._settings.get_string(POSITION_KEY);
+            box.append(panel_position);
+            this._settings.bind(
+                "panel-position",
+                panel_position,
+                "active_id",
+                Gio.SettingsBindFlags.DEFAULT
+            );
 
             box.append(new Gtk.Label({
                 label: '<b>%s</b>'.format(_('Workspace Names')),
@@ -94,9 +116,6 @@ const WorkspaceSettingsWidget = GObject.registerClass(
             });
             this._actionGroup.add_action(action);
 
-            this._settings = new Gio.Settings({
-                schema_id: WORKSPACE_SCHEMA,
-            });
             this._settings.connect(`changed::${WORKSPACE_KEY}`,
                 this._sync.bind(this));
             this._sync();

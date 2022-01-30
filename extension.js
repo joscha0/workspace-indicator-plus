@@ -14,7 +14,7 @@ const PopupMenu = imports.ui.popupMenu;
 
 const _ = ExtensionUtils.gettext;
 
-const WORKSPACE_SCHEMA = 'org.gnome.desktop.wm.preferences';
+const WORKSPACE_SCHEMA = 'org.gnome.shell.extensions.workspace-indicator-plus';
 const WORKSPACE_KEY = 'workspace-names';
 
 const TOOLTIP_OFFSET = 6;
@@ -303,9 +303,7 @@ let WorkspaceIndicator = GObject.registerClass(
             this._updateThumbnails();
             this._updateThumbnailVisibility();
 
-            this._settings = new Gio.Settings({
-                schema_id: WORKSPACE_SCHEMA
-            });
+            this._settings = ExtensionUtils.getSettings();
             this._settingsChangedId = this._settings.connect(
                 `changed::${WORKSPACE_KEY}`,
                 this._updateMenuLabels.bind(this));
@@ -461,7 +459,9 @@ let _indicator;
 /** */
 function enable() {
     _indicator = new WorkspaceIndicator();
-    Main.panel.addToStatusArea('workspace-indicator-plus', _indicator, 0, "left");
+    let settings = ExtensionUtils.getSettings();
+    let position = settings.get_value(POSITION_KEY).get_string();
+    Main.panel.addToStatusArea('workspace-indicator-plus', _indicator, 0, position);
 }
 
 /** */
