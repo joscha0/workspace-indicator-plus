@@ -1,0 +1,10 @@
+{
+    "uuid": "workspace-indicator-plus@joscha0.github.com",
+    "name": "Workspace Indicator Plus",
+    "settings-schema": "org.gnome.shell.extensions.workspace-indicator-plus",
+    "gettext-domain": "gnome-shell-extension-workspace-indicator-plus",
+    "description": "Put an indicator on the panel signaling in which workspace you are, and give you the possibility of switching to another one.",
+    "shell-version": ["41"],
+    "version": 1,
+    "url": "https://github.com/joscha0/workspace-indicator-plus"
+}
