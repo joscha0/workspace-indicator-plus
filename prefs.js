@@ -1,10 +1,7 @@
-const {
-    Gio,
-    GLib,
-    GObject,
-    Gtk,
-    Pango
-} = imports.gi;
+// -*- mode: js2; indent-tabs-mode: nil; js2-basic-offset: 4 -*-
+/* exported init buildPrefsWidget */
+
+const { Adw, Gio, GLib, GObject, Gtk, Pango } = imports.gi;
 
 const ExtensionUtils = imports.misc.extensionUtils;
 
@@ -14,211 +11,250 @@ const N_ = e => e;
 const WORKSPACE_SCHEMA = 'org.gnome.desktop.wm.preferences';
 const WORKSPACE_KEY = 'workspace-names';
 
-const WorkspaceSettingsWidget = GObject.registerClass(
-    class WorkspaceSettingsWidget extends Gtk.ScrolledWindow {
-        _init() {
-            super._init({
-                hscrollbar_policy: Gtk.PolicyType.NEVER,
+class NewItem extends GObject.Object {}
+GObject.registerClass(NewItem);
+
+class NewItemModel extends GObject.Object {
+    static [GObject.interfaces] = [Gio.ListModel];
+    static {
+        GObject.registerClass(this);
+    }
+
+    #item = new NewItem();
+
+    vfunc_get_item_type() {
+        return NewItem;
+    }
+
+    vfunc_get_n_items() {
+        return 1;
+    }
+
+    vfunc_get_item(_pos) {
+        return this.#item;
+    }
+}
+
+class WorkspacesList extends GObject.Object {
+    static [GObject.interfaces] = [Gio.ListModel];
+    static {
+        GObject.registerClass(this);
+    }
+
+    #settings = new Gio.Settings({ schema_id: WORKSPACE_SCHEMA });
+    #names = this.#settings.get_strv(WORKSPACE_KEY);
+    #items = Gtk.StringList.new(this.#names);
+    #changedId;
+
+    constructor() {
+        super();
+
+        this.#changedId =
+            this.#settings.connect(`changed::${WORKSPACE_KEY}`, () => {
+                const removed = this.#names.length;
+                this.#names = this.#settings.get_strv(WORKSPACE_KEY);
+                this.#items.splice(0, removed, this.#names);
+                this.items_changed(0, removed, this.#names.length);
             });
+    }
 
-            const box = new Gtk.Box({
-                orientation: Gtk.Orientation.VERTICAL,
-                halign: Gtk.Align.CENTER,
-                spacing: 12,
-                margin_top: 36,
-                margin_bottom: 36,
-                margin_start: 36,
-                margin_end: 36,
-            });
-            this.set_child(box);
+    append() {
+        const name = _('Workspace %d').format(this.#names.length + 1);
 
-            box.append(new Gtk.Label({
-                label: '<b>%s</b>'.format(_('Workspace Names')),
-                use_markup: true,
-                halign: Gtk.Align.START,
-            }));
+        this.#names.push(name);
+        this.#settings.block_signal_handler(this.#changedId);
+        this.#settings.set_strv(WORKSPACE_KEY, this.#names);
+        this.#settings.unblock_signal_handler(this.#changedId);
 
-            this._list = new Gtk.ListBox({
-                selection_mode: Gtk.SelectionMode.NONE,
-                valign: Gtk.Align.START,
-                show_separators: true,
-            });
-            this._list.connect('row-activated', (l, row) => row.edit());
-            box.append(this._list);
+        const pos = this.#items.get_n_items();
+        this.#items.append(name);
+        this.items_changed(pos, 0, 1);
+    }
 
-            const context = this._list.get_style_context();
-            const cssProvider = new Gtk.CssProvider();
-            cssProvider.load_from_data(
-                'list { min-width: 25em; }');
+    remove(name) {
+        const pos = this.#names.indexOf(name);
+        if (pos < 0)
+            return;
 
-            context.add_provider(cssProvider,
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
-            context.add_class('frame');
+        this.#names.splice(pos, 1);
 
-            this._list.append(new NewWorkspaceRow());
+        this.#settings.block_signal_handler(this.#changedId);
+        this.#settings.set_strv(WORKSPACE_KEY, this.#names);
+        this.#settings.unblock_signal_handler(this.#changedId);
 
-            this._actionGroup = new Gio.SimpleActionGroup();
-            this._list.insert_action_group('workspaces', this._actionGroup);
+        this.#items.remove(pos);
+        this.items_changed(pos, 1, 0);
+    }
 
-            let action;
-            action = new Gio.SimpleAction({
-                name: 'add'
-            });
-            action.connect('activate', () => {
-                const names = this._settings.get_strv(WORKSPACE_KEY);
-                this._settings.set_strv(WORKSPACE_KEY, [
-                    ...names,
-                    _('Workspace %d').format(names.length + 1),
-                ]);
-            });
-            this._actionGroup.add_action(action);
+    rename(oldName, newName) {
+        const pos = this.#names.indexOf(oldName);
+        if (pos < 0)
+            return;
 
-            action = new Gio.SimpleAction({
-                name: 'remove',
-                parameter_type: new GLib.VariantType('s'),
-            });
-            action.connect('activate', (a, param) => {
-                const removed = param.deepUnpack();
-                this._settings.set_strv(WORKSPACE_KEY,
-                    this._settings.get_strv(WORKSPACE_KEY)
-                    .filter(name => name !== removed));
-            });
-            this._actionGroup.add_action(action);
+        this.#names.splice(pos, 1, newName);
+        this.#items.splice(pos, 1, [newName]);
 
-            action = new Gio.SimpleAction({
-                name: 'update'
-            });
-            action.connect('activate', () => {
-                const names = this._getWorkspaceRows().map(row => row.name);
-                this._settings.set_strv(WORKSPACE_KEY, names);
-            });
-            this._actionGroup.add_action(action);
+        this.#settings.block_signal_handler(this.#changedId);
+        this.#settings.set_strv(WORKSPACE_KEY, this.#names);
+        this.#settings.unblock_signal_handler(this.#changedId);
+    }
 
-            this._settings = new Gio.Settings({
-                schema_id: WORKSPACE_SCHEMA,
-            });
-            this._settings.connect(`changed::${WORKSPACE_KEY}`,
-                this._sync.bind(this));
-            this._sync();
-        }
+    vfunc_get_item_type() {
+        return Gtk.StringObject;
+    }
 
-        _getWorkspaceRows() {
-            return [...this._list].filter(row => row.name);
-        }
+    vfunc_get_n_items() {
+        return this.#items.get_n_items();
+    }
 
-        _sync() {
-            const rows = this._getWorkspaceRows();
+    vfunc_get_item(pos) {
+        return this.#items.get_item(pos);
+    }
+}
 
-            const oldNames = rows.map(row => row.name);
-            const newNames = this._settings.get_strv(WORKSPACE_KEY);
+class WorkspaceSettingsWidget extends Adw.PreferencesGroup {
+    static {
+        GObject.registerClass(this);
 
-            const removed = oldNames.filter(n => !newNames.includes(n));
-            const added = newNames.filter(n => !oldNames.includes(n));
+        this.install_action('workspaces.add', null,
+            self => self._workspaces.append());
+        this.install_action('workspaces.remove', 's',
+            (self, name, param) => self._workspaces.remove(param.unpack()));
+        this.install_action('workspaces.rename', '(ss)',
+            (self, name, param) => self._workspaces.rename(...param.deepUnpack()));
+    }
 
-            removed.forEach(n => this._list.remove(rows.find(r => r.name === n)));
-            added.forEach(n => {
-                this._list.insert(new WorkspaceRow(n), newNames.indexOf(n));
-            });
-        }
-    });
+    constructor() {
+        super({
+            title: _('Workspace Names'),
+        });
 
-const WorkspaceRow = GObject.registerClass(
-    class WorkspaceRow extends Gtk.ListBoxRow {
-        _init(name) {
-            super._init({
-                name
-            });
+        this._workspaces = new WorkspacesList();
 
-            const box = new Gtk.Box({
-                spacing: 12,
-                margin_top: 6,
-                margin_bottom: 6,
-                margin_start: 6,
-                margin_end: 6,
-            });
+        const store = new Gio.ListStore({ item_type: Gio.ListModel });
+        const listModel = new Gtk.FlattenListModel({ model: store });
+        store.append(this._workspaces);
+        store.append(new NewItemModel());
 
-            const label = new Gtk.Label({
-                hexpand: true,
-                xalign: 0,
-                max_width_chars: 25,
-                ellipsize: Pango.EllipsizeMode.END,
-            });
-            this.bind_property('name', label, 'label',
-                GObject.BindingFlags.SYNC_CREATE);
-            box.append(label);
+        this._list = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.NONE,
+            css_classes: ['boxed-list'],
+        });
+        this._list.connect('row-activated', (l, row) => row.edit());
+        this.add(this._list);
 
-            const button = new Gtk.Button({
-                action_name: 'workspaces.remove',
-                action_target: new GLib.Variant('s', name),
-                icon_name: 'edit-delete-symbolic',
-            });
-            box.append(button);
+        this._list.bind_model(listModel, item => {
+            return item instanceof NewItem
+                ? new NewWorkspaceRow()
+                : new WorkspaceRow(item.string);
+        });
+    }
+}
 
-            this._entry = new Gtk.Entry({
-                max_width_chars: 25,
-            });
+class WorkspaceRow extends Adw.PreferencesRow {
+    static {
+        GObject.registerClass(this);
+    }
 
-            const controller = new Gtk.ShortcutController();
-            controller.add_shortcut(new Gtk.Shortcut({
-                trigger: Gtk.ShortcutTrigger.parse_string('Escape'),
-                action: Gtk.CallbackAction.new(() => {
-                    this._stopEdit();
-                    return true;
-                }),
-            }));
-            this._entry.add_controller(controller);
+    constructor(name) {
+        super({ name });
 
-            this._stack = new Gtk.Stack();
-            this._stack.add_named(box, 'display');
-            this._stack.add_named(this._entry, 'edit');
-            this.child = this._stack;
+        const box = new Gtk.Box({
+            spacing: 12,
+            margin_top: 6,
+            margin_bottom: 6,
+            margin_start: 6,
+            margin_end: 6,
+        });
 
-            this._entry.connect('activate', () => {
-                this.name = this._entry.text;
+        const label = new Gtk.Label({
+            hexpand: true,
+            xalign: 0,
+            max_width_chars: 25,
+            ellipsize: Pango.EllipsizeMode.END,
+        });
+        this.bind_property('name', label, 'label',
+            GObject.BindingFlags.SYNC_CREATE);
+        box.append(label);
+
+        const button = new Gtk.Button({
+            action_name: 'workspaces.remove',
+            icon_name: 'edit-delete-symbolic',
+            has_frame: false,
+        });
+        box.append(button);
+
+        this.bind_property_full('name',
+            button, 'action-target',
+            GObject.BindingFlags.SYNC_CREATE,
+            (bind, target) => [true, new GLib.Variant('s', target)],
+            null);
+
+        this._entry = new Gtk.Entry({
+            max_width_chars: 25,
+        });
+
+        const controller = new Gtk.ShortcutController();
+        controller.add_shortcut(new Gtk.Shortcut({
+            trigger: Gtk.ShortcutTrigger.parse_string('Escape'),
+            action: Gtk.CallbackAction.new(() => {
                 this._stopEdit();
-            });
-            this._entry.connect('notify::has-focus', () => {
-                if (this._entry.has_focus)
-                    return;
-                this._stopEdit();
-            });
+                return true;
+            }),
+        }));
+        this._entry.add_controller(controller);
 
-            this.connect('notify::name', () => {
-                button.action_target = new GLib.Variant('s', this.name);
-                this.activate_action('workspaces.update', null);
-            });
-        }
+        this._stack = new Gtk.Stack();
+        this._stack.add_named(box, 'display');
+        this._stack.add_named(this._entry, 'edit');
+        this.child = this._stack;
 
-        edit() {
-            this._entry.text = this.name;
-            this._entry.grab_focus();
-            this._stack.visible_child_name = 'edit';
-        }
+        this._entry.connect('activate', () => {
+            this.activate_action('workspaces.rename',
+                new GLib.Variant('(ss)', [this.name, this._entry.text]));
+            this.name = this._entry.text;
+            this._stopEdit();
+        });
+        this._entry.connect('notify::has-focus', () => {
+            if (this._entry.has_focus)
+                return;
+            this._stopEdit();
+        });
+    }
 
-        _stopEdit() {
-            this.grab_focus();
-            this._stack.visible_child_name = 'display';
-        }
-    });
+    edit() {
+        this._entry.text = this.name;
+        this._entry.grab_focus();
+        this._stack.visible_child_name = 'edit';
+    }
 
-const NewWorkspaceRow = GObject.registerClass(
-    class NewWorkspaceRow extends Gtk.ListBoxRow {
-        _init() {
-            super._init({
-                action_name: 'workspaces.add',
-                child: new Gtk.Image({
-                    icon_name: 'list-add-symbolic',
-                    pixel_size: 16,
-                    margin_top: 12,
-                    margin_bottom: 12,
-                    margin_start: 12,
-                    margin_end: 12,
-                }),
-            });
-            this.update_property(
-                [Gtk.AccessibleProperty.LABEL], [_('Add Workspace')]);
-        }
-    });
+    _stopEdit() {
+        this.grab_focus();
+        this._stack.visible_child_name = 'display';
+    }
+}
+
+class NewWorkspaceRow extends Adw.PreferencesRow {
+    static {
+        GObject.registerClass(this);
+    }
+
+    constructor() {
+        super({
+            action_name: 'workspaces.add',
+            child: new Gtk.Image({
+                icon_name: 'list-add-symbolic',
+                pixel_size: 16,
+                margin_top: 12,
+                margin_bottom: 12,
+                margin_start: 12,
+                margin_end: 12,
+            }),
+        });
+        this.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_('Add Workspace')]);
+    }
+}
 
 /** */
 function init() {
